@@ -1,13 +1,13 @@
+import { useLocalization } from '@fluent/react';
 import classNames from 'classnames';
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import {
-  CloseSerialRequestT,
-  OpenSerialRequestT,
   RpcMessage,
-  SerialUpdateResponseT,
-  SetWifiRequestT
+  StartWifiProvisioningRequestT,
+  StopWifiProvisioningRequestT,
+  WifiProvisioningStatus,
+  WifiProvisioningStatusResponseT,
 } from 'solarxr-protocol';
 import { useLayout } from '../../../hooks/layout';
 import { useOnboarding } from '../../../hooks/onboarding';
@@ -21,113 +21,68 @@ import { Typography } from '../../commons/Typography';
 import { TrackerCard } from '../../tracker/TrackerCard';
 
 const BOTTOM_HEIGHT = 80;
-type ConnectionStatus =
-  | 'CONNECTING'
-  | 'CONNECTED'
-  | 'HANDSHAKE'
-  | 'ERROR'
-  | 'START-CONNECTING';
 
 const statusLabelMap = {
-  ['CONNECTING']: 'onboarding.connect-tracker.connection-status.connecting',
-  ['CONNECTED']: 'onboarding.connect-tracker.connection-status.connected',
-  ['ERROR']: 'onboarding.connect-tracker.connection-status.error',
-  ['START-CONNECTING']:
-    'onboarding.connect-tracker.connection-status.start-connecting',
-  ['HANDSHAKE']: 'onboarding.connect-tracker.connection-status.start-handshake',
+  [WifiProvisioningStatus.NONE]:
+    'onboarding-connect_tracker-connection_status-none',
+  [WifiProvisioningStatus.SERIAL_INIT]:
+    'onboarding-connect_tracker-connection_status-serial_init',
+  [WifiProvisioningStatus.PROVISIONING]:
+    'onboarding-connect_tracker-connection_status-provisioning',
+  [WifiProvisioningStatus.CONNECTING]:
+    'onboarding-connect_tracker-connection_status-connecting',
+  [WifiProvisioningStatus.LOOKING_FOR_SERVER]:
+    'onboarding-connect_tracker-connection_status-looking_for_server',
+  [WifiProvisioningStatus.DONE]:
+    'onboarding-connect_tracker-connection_status-done',
+  [WifiProvisioningStatus.CONNECTION_ERROR]:
+    'onboarding-connect_tracker-connection_status-connection_error',
+  [WifiProvisioningStatus.COULD_NOT_FIND_SERVER]:
+    'onboarding-connect_tracker-connection_status-could_not_find_server',
 };
 
 export function ConnectTrackersPage() {
-  const { t } = useTranslation();
+  const { l10n } = useLocalization();
   const { layoutHeight, ref } = useLayout<HTMLDivElement>();
   const { trackers, useConnectedTrackers } = useTrackers();
   const { applyProgress, state, skipSetup } = useOnboarding();
   const navigate = useNavigate();
   const { sendRPCPacket, useRPCPacket } = useWebsocketAPI();
-  const [isSerialOpen, setSerialOpen] = useState(false);
-  const [connectionStatus, setConnectionStatus] =
-    useState<ConnectionStatus>('START-CONNECTING');
+  const [provisioningStatus, setProvisioningStatus] =
+    useState<WifiProvisioningStatus>(WifiProvisioningStatus.NONE);
 
   applyProgress(0.4);
 
   const connectedTrackers = useConnectedTrackers();
-
-  const openSerial = () => {
-    const req = new OpenSerialRequestT();
-    req.auto = true;
-
-    sendRPCPacket(RpcMessage.OpenSerialRequest, req);
-  };
 
   useEffect(() => {
     if (!state.wifi) {
       navigate('/onboarding/wifi-creds');
     }
 
-    openSerial();
+    const req = new StartWifiProvisioningRequestT();
+    req.ssid = state.wifi?.ssid as string;
+    req.password = state.wifi?.password as string;
+
+    sendRPCPacket(RpcMessage.StartWifiProvisioningRequest, req);
     return () => {
-      sendRPCPacket(RpcMessage.CloseSerialRequest, new CloseSerialRequestT());
+      sendRPCPacket(
+        RpcMessage.StopWifiProvisioningRequest,
+        new StopWifiProvisioningRequestT()
+      );
     };
   }, []);
 
   useRPCPacket(
-    RpcMessage.SerialUpdateResponse,
-    (data: SerialUpdateResponseT) => {
-      if (data.closed) {
-        setSerialOpen(false);
-        setConnectionStatus('START-CONNECTING');
-        setTimeout(() => {
-          openSerial();
-        }, 1000);
-      }
-
-      if (!data.closed && !isSerialOpen) {
-        setSerialOpen(true);
-        setConnectionStatus('START-CONNECTING');
-      }
-
-      if (data.log) {
-        const log = data.log as string;
-        if (connectionStatus === 'START-CONNECTING' && state.wifi) {
-          setConnectionStatus('CONNECTING');
-          if (!state.wifi) return;
-          const wifi = new SetWifiRequestT();
-          wifi.ssid = state.wifi.ssid;
-          wifi.password = state.wifi.password;
-          sendRPCPacket(RpcMessage.SetWifiRequest, wifi);
-        }
-
-        if (log.includes('Connected successfully to SSID')) {
-          setConnectionStatus('CONNECTED');
-        }
-
-        if (log.includes('Handshake successful')) {
-          setConnectionStatus('HANDSHAKE');
-          setTimeout(() => {
-            setConnectionStatus('START-CONNECTING');
-          }, 3000);
-        }
-
-        if (
-          // eslint-disable-next-line quotes
-          log.includes("Can't connect from any credentials")
-        ) {
-          setConnectionStatus('ERROR');
-        }
-      }
+    RpcMessage.WifiProvisioningStatusResponse,
+    ({ status }: WifiProvisioningStatusResponseT) => {
+      setProvisioningStatus(status);
     }
   );
 
-  useEffect(() => {
-    const id = setInterval(() => {
-      if (!isSerialOpen) openSerial();
-      else clearInterval(id);
-    }, 1000);
-
-    return () => {
-      clearInterval(id);
-    };
-  }, [isSerialOpen, sendRPCPacket]);
+  const isError =
+    provisioningStatus === WifiProvisioningStatus.CONNECTION_ERROR ||
+    provisioningStatus === WifiProvisioningStatus.COULD_NOT_FIND_SERVER;
 
   return (
     <div className="flex flex-col items-center">
@@ -135,17 +90,17 @@ export function ConnectTrackersPage() {
         <div className="flex flex-col w-full max-w-sm">
           {!state.alonePage && (
             <ArrowLink to="/onboarding/wifi-creds">
-              {t('onboarding.connect-tracker.back')}
+              {l10n.getString('onboarding-connect_tracker-back')}
             </ArrowLink>
           )}
           <Typography variant="main-title">
-            {t('onboarding.connect-tracker.title')}
+            {l10n.getString('onboarding-connect_tracker-title')}
           </Typography>
           <Typography color="secondary">
-            {t('onboarding.connect-tracker.description.p0')}
+            {l10n.getString('onboarding-connect_tracker-description-p0')}
           </Typography>
           <Typography color="secondary">
-            {t('onboarding.connect-tracker.description.p1')}
+            {l10n.getString('onboarding-connect_tracker-description-p1')}
           </Typography>
           <div className="flex flex-col gap-2 py-5">
             {/* <ArrowLink
@@ -161,36 +116,36 @@ export function ConnectTrackersPage() {
               direction="right"
               variant={state.alonePage ? 'boxed-2' : 'boxed'}
             >
-              {t('onboarding.connect-tracker.issue.serial')}
+              {l10n.getString('onboarding-connect_tracker-issue-serial')}
             </ArrowLink>
           </div>
-          <TipBox>{t('tips.find-tracker')}</TipBox>
+          <TipBox>{l10n.getString('tips-find_tracker')}</TipBox>
 
           <div
             className={classNames(
               'rounded-xl h-16 flex gap-2 p-3 lg:w-full mt-4',
               state.alonePage ? 'bg-background-60' : 'bg-background-70',
-              connectionStatus === 'ERROR' && 'border-2 border-status-critical'
+              isError && 'border-2 border-status-critical'
             )}
           >
             <div className="flex flex-col justify-center fill-background-10">
               <LoaderIcon
-                youSpinMeRightRoundBabyRightRound={connectionStatus !== 'ERROR'}
+                youSpinMeRightRoundBabyRightRound={!isError}
               ></LoaderIcon>
             </div>
             <div className="flex flex-col">
               <Typography bold>
-                {t('onboarding.connect-tracker.usb')}
+                {l10n.getString('onboarding-connect_tracker-usb')}
               </Typography>
               <Typography color="secondary">
-                {t(statusLabelMap[connectionStatus])}
+                {l10n.getString(statusLabelMap[provisioningStatus])}
               </Typography>
             </div>
           </div>
         </div>
         <div className="flex flex-col flex-grow">
           <Typography color="secondary" bold>
-            {t('onboarding.connect-tracker.connected-trackers', {
+            {l10n.getString('onboarding-connect_tracker-connected_trackers', {
               amount: connectedTrackers.length,
             })}
           </Typography>
@@ -237,19 +192,19 @@ export function ConnectTrackersPage() {
           <div className="flex flex-grow">
             {!state.alonePage && (
               <Button variant="secondary" to="/" onClick={skipSetup}>
-                {t('onboarding.skip')}
+                {l10n.getString('onboarding-skip')}
               </Button>
             )}
           </div>
           <div className="flex gap-3">
             {!state.alonePage && (
               <Button variant="primary" to="/onboarding/trackers-assign">
-                {t('onboarding.connect-tracker.next')}
+                {l10n.getString('onboarding-connect_tracker-next')}
               </Button>
             )}
             {state.alonePage && (
               <Button variant="primary" to="/">
-                {t('onboarding.connect-tracker.next')}
+                {l10n.getString('onboarding-connect_tracker-next')}
               </Button>
             )}
           </div>

@@ -10,17 +10,20 @@ import dev.slimevr.poserecorder.PoseFrames;
 import dev.slimevr.protocol.GenericConnection;
 import dev.slimevr.protocol.ProtocolAPI;
 import dev.slimevr.protocol.ProtocolHandler;
+import dev.slimevr.protocol.rpc.serial.RPCProvisioningHandler;
 import dev.slimevr.protocol.rpc.serial.RPCSerialHandler;
 import dev.slimevr.protocol.rpc.settings.RPCSettingsHandler;
-import dev.slimevr.vr.processor.skeleton.SkeletonConfigOffsets;
-import dev.slimevr.vr.trackers.IMUTracker;
-import dev.slimevr.vr.trackers.Tracker;
-import dev.slimevr.vr.trackers.TrackerPosition;
+import dev.slimevr.tracking.processor.config.SkeletonConfigOffsets;
+import dev.slimevr.tracking.trackers.IMUTracker;
+import dev.slimevr.tracking.trackers.Tracker;
+import dev.slimevr.tracking.trackers.TrackerPosition;
 import io.eiren.util.logging.LogManager;
 import solarxr_protocol.MessageBundle;
 import solarxr_protocol.datatypes.TransactionId;
 import solarxr_protocol.rpc.*;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.EnumMap;
 import java.util.Map.Entry;
 import java.util.function.BiConsumer;
@@ -28,6 +31,8 @@ import java.util.function.BiConsumer;
 
 public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 	implements AutoBoneListener {
+
+	private static final String resetSourceName = "WebSocketAPI";
 
 	private final ProtocolAPI api;
 
@@ -38,11 +43,16 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 		this.api = api;
 
 		new RPCSerialHandler(this, api);
+		new RPCProvisioningHandler(this, api);
 		new RPCSettingsHandler(this, api);
 
 		registerPacketListener(RpcMessage.ResetRequest, this::onResetRequest);
 		registerPacketListener(RpcMessage.AssignTrackerRequest, this::onAssignTrackerRequest);
 
+		registerPacketListener(
+			RpcMessage.ClearDriftCompensationRequest,
+			this::onClearDriftCompensationRequest
+		);
 
 		registerPacketListener(RpcMessage.RecordBVHRequest, this::onRecordBVHRequest);
 
@@ -64,7 +74,27 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 			this::onOverlayDisplayModeRequest
 		);
 
+		registerPacketListener(RpcMessage.ServerInfosRequest, this::onServerInfosRequest);
+
 		this.api.server.getAutoBoneHandler().addListener(this);
+	}
+
+	private void onServerInfosRequest(
+		GenericConnection conn,
+		RpcMessageHeader messageHeader
+	) {
+		FlatBufferBuilder fbb = new FlatBufferBuilder(32);
+
+		try {
+			String localIp = InetAddress.getLocalHost().getHostAddress();
+			int response = ServerInfosResponse
+				.createServerInfosResponse(fbb, fbb.createString(localIp));
+			int outbound = this.createRPCMessage(fbb, RpcMessage.ServerInfosResponse, response);
+			fbb.finish(outbound);
+			conn.send(fbb.dataBuffer());
+		} catch (UnknownHostException e) {
+			throw new RuntimeException(e);
+		}
 	}
 
 	private void onOverlayDisplayModeRequest(
@@ -101,13 +131,13 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 		if (req == null)
 			return;
 
-		this.api.server.humanPoseProcessor.getSkeletonConfig().resetOffsets();
-		this.api.server.humanPoseProcessor.getSkeletonConfig().save();
+		this.api.server.humanPoseManager.resetOffsets();
+		this.api.server.humanPoseManager.saveConfig();
 		this.api.server.getConfigManager().saveConfig();
 
 		// might not be a good idea maybe let the client ask again
 		FlatBufferBuilder fbb = new FlatBufferBuilder(300);
-		int config = RPCBuilder.createSkeletonConfig(fbb, this.api.server.humanPoseProcessor);
+		int config = RPCBuilder.createSkeletonConfig(fbb, this.api.server.humanPoseManager);
 		int outbound = this.createRPCMessage(fbb, RpcMessage.SkeletonConfigResponse, config);
 		fbb.finish(outbound);
 		conn.send(fbb.dataBuffer());
@@ -120,7 +150,7 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 			return;
 
 		FlatBufferBuilder fbb = new FlatBufferBuilder(300);
-		int config = RPCBuilder.createSkeletonConfig(fbb, this.api.server.humanPoseProcessor);
+		int config = RPCBuilder.createSkeletonConfig(fbb, this.api.server.humanPoseManager);
 		int outbound = this.createRPCMessage(fbb, RpcMessage.SkeletonConfigResponse, config);
 		fbb.finish(outbound);
 		conn.send(fbb.dataBuffer());
@@ -137,8 +167,8 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 
 		SkeletonConfigOffsets joint = SkeletonConfigOffsets.getById(req.bone());
 
-		this.api.server.humanPoseProcessor.setSkeletonConfig(joint, req.value());
-		this.api.server.humanPoseProcessor.getSkeletonConfig().save();
+		this.api.server.humanPoseManager.setOffset(joint, req.value());
+		this.api.server.humanPoseManager.saveConfig();
 		this.api.server.getConfigManager().saveConfig();
 	}
 
@@ -169,12 +199,11 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 			return;
 
 		if (req.resetType() == ResetType.Quick)
-			this.api.server.resetTrackersYaw();
+			this.api.server.resetTrackersYaw(resetSourceName);
 		if (req.resetType() == ResetType.Full)
-			this.api.server.resetTrackers();
+			this.api.server.resetTrackers(resetSourceName);
 		if (req.resetType() == ResetType.Mounting)
-			this.api.server.resetTrackersMounting();
-		LogManager.severe("[WebSocketAPI] Reset performed");
+			this.api.server.resetTrackersMounting(resetSourceName);
 	}
 
 	public void onAssignTrackerRequest(GenericConnection conn, RpcMessageHeader messageHeader) {
@@ -191,27 +220,41 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 		TrackerPosition pos = TrackerPosition.getByBodyPart(req.bodyPosition()).orElse(null);
 		tracker.setBodyPosition(pos);
 
-		if (req.mountingRotation() != null) {
+		if (req.mountingOrientation() != null) {
 			if (tracker instanceof IMUTracker imu) {
 				imu
-					.setMountingRotation(
+					.setMountingOrientation(
 						new Quaternion(
-							req.mountingRotation().x(),
-							req.mountingRotation().y(),
-							req.mountingRotation().z(),
-							req.mountingRotation().w()
+							req.mountingOrientation().x(),
+							req.mountingOrientation().y(),
+							req.mountingOrientation().z(),
+							req.mountingOrientation().w()
 						)
 					);
 			}
 		}
 
 		if (req.displayName() != null) {
-			if (tracker instanceof IMUTracker imu) {
-				imu.setCustomName(req.displayName());
-			}
+			tracker.setCustomName(req.displayName());
+		}
+
+		if (tracker instanceof IMUTracker imu) {
+			imu.setAllowDriftCompensation(req.allowDriftCompensation());
 		}
 
 		this.api.server.trackerUpdated(tracker);
+	}
+
+	public void onClearDriftCompensationRequest(
+		GenericConnection conn,
+		RpcMessageHeader messageHeader
+	) {
+		ClearDriftCompensationRequest req = (ClearDriftCompensationRequest) messageHeader
+			.message(new ClearDriftCompensationRequest());
+		if (req == null)
+			return;
+
+		this.api.server.clearTrackersDriftCompensation();
 	}
 
 	@Override
@@ -255,7 +298,7 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 		conn.getContext().setUseAutoBone(true);
 		this.api.server
 			.getAutoBoneHandler()
-			.startProcessByType(AutoBoneProcessType.getById(req.processType()));
+			.startProcessByType(AutoBoneProcessType.Companion.getById(req.processType()));
 	}
 
 	@Override
@@ -279,7 +322,7 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 						Integer messageOffset = message != null ? fbb.createString(message) : null;
 
 						AutoBoneProcessStatusResponse.startAutoBoneProcessStatusResponse(fbb);
-						AutoBoneProcessStatusResponse.addProcessType(fbb, processType.id);
+						AutoBoneProcessStatusResponse.addProcessType(fbb, processType.getId());
 						if (messageOffset != null)
 							AutoBoneProcessStatusResponse.addMessage(fbb, messageOffset);
 						if (total > 0 && current >= 0) {
@@ -322,10 +365,11 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 					.forEach((conn) -> {
 						FlatBufferBuilder fbb = new FlatBufferBuilder(32);
 
-						int[] skeletonPartOffsets = new int[epoch.configValues.size()];
+						int[] skeletonPartOffsets = new int[epoch.getConfigValues().size()];
 						int i = 0;
 						for (
-							Entry<SkeletonConfigOffsets, Float> skeletonConfig : epoch.configValues
+							Entry<SkeletonConfigOffsets, Float> skeletonConfig : epoch
+								.getConfigValues()
 								.entrySet()
 						) {
 							skeletonPartOffsets[i++] = SkeletonPart
@@ -342,9 +386,9 @@ public class RPCHandler extends ProtocolHandler<RpcMessageHeader>
 						int update = AutoBoneEpochResponse
 							.createAutoBoneEpochResponse(
 								fbb,
-								epoch.epoch,
-								epoch.totalEpochs,
-								epoch.epochError.getMean(),
+								epoch.getEpoch(),
+								epoch.getTotalEpochs(),
+								epoch.getEpochError().getMean(),
 								skeletonPartsOffset
 							);
 						int outbound = this

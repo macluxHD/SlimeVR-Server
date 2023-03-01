@@ -8,13 +8,13 @@ import com.jme3.math.FastMath;
 import com.jme3.math.Quaternion;
 import com.jme3.math.Vector3f;
 import dev.slimevr.VRServer;
-import dev.slimevr.config.OSCConfig;
+import dev.slimevr.config.VRCOSCConfig;
 import dev.slimevr.platform.SteamVRBridge;
-import dev.slimevr.vr.processor.HumanPoseProcessor;
-import dev.slimevr.vr.trackers.HMDTracker;
-import dev.slimevr.vr.trackers.ShareableTracker;
-import dev.slimevr.vr.trackers.TrackerRole;
-import dev.slimevr.vr.trackers.TrackerStatus;
+import dev.slimevr.tracking.processor.HumanPoseManager;
+import dev.slimevr.tracking.trackers.HMDTracker;
+import dev.slimevr.tracking.trackers.ShareableTracker;
+import dev.slimevr.tracking.trackers.TrackerRole;
+import dev.slimevr.tracking.trackers.TrackerStatus;
 import io.eiren.util.collections.FastList;
 import io.eiren.util.logging.LogManager;
 
@@ -30,11 +30,11 @@ public class VRCOSCHandler implements OSCHandler {
 	private OSCPortIn oscReceiver;
 	private OSCPortOut oscSender;
 	private OSCMessage oscMessage;
-	private final OSCConfig config;
+	private final VRCOSCConfig config;
 	private final VRServer server;
 	private final HMDTracker hmd;
 	private final SteamVRBridge steamvrBridge;
-	private final HumanPoseProcessor humanPoseProcessor;
+	private final HumanPoseManager humanPoseManager;
 	private final List<? extends ShareableTracker> shareableTrackers;
 	private final FastList<Float> oscArgs = new FastList<>(3);
 	private final Vector3f vec = new Vector3f();
@@ -42,24 +42,22 @@ public class VRCOSCHandler implements OSCHandler {
 	private final Vector3f vecBuf1 = new Vector3f();
 	private final Vector3f vecBuf2 = new Vector3f();
 	private final boolean[] trackersEnabled;
-	private long timeAtLastOSCMessageReceived;
-	private static final long HMD_TIMEOUT = 15000;
 	private int lastPortIn;
 	private int lastPortOut;
 	private InetAddress lastAddress;
-	private float timeAtLastError;
+	private long timeAtLastError;
 
 	public VRCOSCHandler(
 		VRServer server,
 		HMDTracker hmd,
-		HumanPoseProcessor humanPoseProcessor,
+		HumanPoseManager humanPoseManager,
 		SteamVRBridge steamvrBridge,
-		OSCConfig oscConfig,
+		VRCOSCConfig oscConfig,
 		List<? extends ShareableTracker> shareableTrackers
 	) {
 		this.server = server;
 		this.hmd = hmd;
-		this.humanPoseProcessor = humanPoseProcessor;
+		this.humanPoseManager = humanPoseManager;
 		this.steamvrBridge = steamvrBridge;
 		this.config = oscConfig;
 		this.shareableTrackers = shareableTrackers;
@@ -169,8 +167,6 @@ public class VRCOSCHandler implements OSCHandler {
 	}
 
 	void handleReceivedMessage(OSCMessageEvent event) {
-		timeAtLastOSCMessageReceived = System.currentTimeMillis();
-
 		if (steamvrBridge != null && !steamvrBridge.isConnected()) {
 			// Sets HMD status to OK
 			if (hmd.getStatus() != TrackerStatus.OK) {
@@ -185,7 +181,7 @@ public class VRCOSCHandler implements OSCHandler {
 					(float) event
 						.getMessage()
 						.getArguments()
-						.get(0) * humanPoseProcessor.getUserHeightFromConfig(),
+						.get(0) * humanPoseManager.getUserHeightFromConfig(),
 					0f
 				);
 			hmd.rotation.set(Quaternion.IDENTITY);
@@ -197,25 +193,13 @@ public class VRCOSCHandler implements OSCHandler {
 	@Override
 	public void update() {
 		float currentTime = System.currentTimeMillis();
-		// Manage HMD state with timeout
-		if (oscReceiver != null) {
-			if (
-				((steamvrBridge != null
-					&& steamvrBridge.isConnected())
-					||
-					currentTime - timeAtLastOSCMessageReceived > HMD_TIMEOUT
-					||
-					!oscReceiver.isListening())
-					&& hmd.getStatus() == TrackerStatus.OK
-			) {
-				hmd.setStatus(TrackerStatus.DISCONNECTED);
-			}
-		}
 
 		// Send OSC data
 		if (oscSender != null && oscSender.isConnected()) {
+			int id = 0;
 			for (int i = 0; i < shareableTrackers.size(); i++) {
 				if (trackersEnabled[i]) {
+					id++;
 					// Send regular trackers' positions
 					shareableTrackers.get(i).getPosition(vec);
 					oscArgs.clear();
@@ -223,7 +207,7 @@ public class VRCOSCHandler implements OSCHandler {
 					oscArgs.add(vec.y);
 					oscArgs.add(-vec.z);
 					oscMessage = new OSCMessage(
-						"/tracking/trackers/" + (i + 1) + "/position",
+						"/tracking/trackers/" + id + "/position",
 						oscArgs
 					);
 					try {
@@ -250,7 +234,7 @@ public class VRCOSCHandler implements OSCHandler {
 					oscArgs.add(floatBuf[2] * FastMath.RAD_TO_DEG);
 
 					oscMessage = new OSCMessage(
-						"/tracking/trackers/" + (i + 1) + "/rotation",
+						"/tracking/trackers/" + id + "/rotation",
 						oscArgs
 					);
 					try {
@@ -338,7 +322,7 @@ public class VRCOSCHandler implements OSCHandler {
 
 	/*
 	 * Apache Commons Math Copyright 2001-2022 The Apache Software Foundation
-	 * 
+	 *
 	 * The code below includes code developed at The Apache Software Foundation
 	 * (http://www.apache.org/).
 	 */

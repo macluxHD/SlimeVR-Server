@@ -1,15 +1,17 @@
 import classNames from 'classnames';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import ReactModal from 'react-modal';
 import { BodyPart } from 'solarxr-protocol';
 import { Button } from '../commons/Button';
 import { CheckBox } from '../commons/Checkbox';
 import { Typography } from '../commons/Typography';
 import { BodyAssignment } from '../onboarding/BodyAssignment';
+import { useLocalization } from '@fluent/react';
+import { NeckWarningModal } from '../onboarding/NeckWarningModal';
+import { useChokerWarning } from '../../hooks/choker-warning';
 
 export function SingleTrackerBodyAssignmentMenu({
-  isOpen = true,
+  isOpen,
   onClose,
   onRoleSelected,
 }: {
@@ -17,65 +19,87 @@ export function SingleTrackerBodyAssignmentMenu({
   onClose: () => void;
   onRoleSelected: (role: BodyPart) => void;
 }) {
-  const { t } = useTranslation();
+  const { l10n } = useLocalization();
   const { control, watch } = useForm<{ advanced: boolean }>({
     defaultValues: { advanced: false },
   });
   const { advanced } = watch();
 
+  const { closeChokerWarning, tryOpenChokerWarning, shouldShowChokerWarn } =
+    useChokerWarning({
+      next: onRoleSelected,
+    });
+
   return (
-    <ReactModal
-      isOpen={isOpen}
-      shouldCloseOnOverlayClick
-      shouldCloseOnEsc
-      onRequestClose={onClose}
-      overlayClassName={classNames(
-        'fixed top-0 right-0 left-0 bottom-0 flex flex-col items-center w-full h-full justify-center bg-black bg-opacity-90 z-20'
-      )}
-      className={classNames(
-        'focus:ring-transparent focus:ring-offset-transparent focus:outline-transparent outline-none mt-20 z-10'
-      )}
-    >
-      <div className="flex w-full h-full flex-col gap-10 px-3">
-        <div className="flex flex-col w-full h-full justify-center items-center">
-          <div className="flex gap-8">
-            <div className="flex flex-col max-w-sm gap-3">
-              <Typography variant="main-title" bold>
-                {t('body-assignment-menu.title')}
-              </Typography>
-              <Typography color="secondary">
-                {t('body-assignment-menu.description')}
-              </Typography>
-              <CheckBox
-                control={control}
-                label={t('body-assignment-menu.show-advanced-locations')}
-                name="advanced"
-                variant="toggle"
-              ></CheckBox>
-              <div className="flex">
-                <Button variant="secondary" to="/onboarding/trackers-assign">
-                  {t('body-assignment-menu.manage-trackers')}
-                </Button>
+    <>
+      <ReactModal
+        isOpen={isOpen}
+        shouldCloseOnOverlayClick
+        shouldCloseOnEsc
+        onRequestClose={onClose}
+        overlayClassName={classNames(
+          'fixed top-0 right-0 left-0 bottom-0 flex flex-col items-center w-full h-full justify-center bg-black bg-opacity-90 z-20'
+        )}
+        className={classNames(
+          'focus:ring-transparent focus:ring-offset-transparent focus:outline-transparent outline-none mt-20 z-10'
+        )}
+      >
+        <div className="flex w-full h-full flex-col gap-10 px-3">
+          <div className="flex flex-col w-full h-full justify-center items-center">
+            <div className="flex gap-8">
+              <div className="flex flex-col max-w-sm gap-3">
+                <Typography variant="main-title" bold>
+                  {l10n.getString('body_assignment_menu')}
+                </Typography>
+                <Typography color="secondary">
+                  {l10n.getString('body_assignment_menu-description')}
+                </Typography>
+                <CheckBox
+                  control={control}
+                  label={l10n.getString(
+                    'body_assignment_menu-show_advanced_locations'
+                  )}
+                  name="advanced"
+                  variant="toggle"
+                ></CheckBox>
+                <div className="flex">
+                  <Button
+                    variant="secondary"
+                    to="/onboarding/trackers-assign"
+                    state={{ alonePage: true }}
+                  >
+                    {l10n.getString('body_assignment_menu-manage_trackers')}
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div className="flex flex-col flex-grow gap-3 rounded-xl fill-background-50">
-              <BodyAssignment
-                onlyAssigned={false}
-                advanced={advanced}
-                onRoleSelected={onRoleSelected}
-              ></BodyAssignment>
-              <div className="flex justify-center">
-                <Button
-                  variant="secondary"
-                  onClick={() => onRoleSelected(BodyPart.NONE)}
-                >
-                  {t('body-assignment-menu.unassign-tracker')}
-                </Button>
+              <div className="flex flex-col flex-grow gap-3 rounded-xl fill-background-50">
+                <BodyAssignment
+                  onlyAssigned={false}
+                  advanced={advanced}
+                  onRoleSelected={tryOpenChokerWarning}
+                ></BodyAssignment>
+                <div className="flex justify-center">
+                  <Button
+                    variant="secondary"
+                    onClick={() => onRoleSelected(BodyPart.NONE)}
+                  >
+                    {l10n.getString('body_assignment_menu-unassign_tracker')}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </ReactModal>
+      </ReactModal>
+
+      <NeckWarningModal
+        isOpen={shouldShowChokerWarn}
+        overlayClassName={classNames(
+          'fixed top-0 right-0 left-0 bottom-0 flex flex-col items-center w-full h-full justify-center bg-black bg-opacity-90 z-20'
+        )}
+        onClose={() => closeChokerWarning(true)}
+        accept={() => closeChokerWarning(false)}
+      ></NeckWarningModal>
+    </>
   );
 }

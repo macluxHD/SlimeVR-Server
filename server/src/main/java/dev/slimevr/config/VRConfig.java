@@ -6,25 +6,29 @@ import com.fasterxml.jackson.databind.ser.std.StdKeySerializers;
 import com.github.jonpeterson.jackson.module.versioning.JsonVersionedModel;
 import dev.slimevr.config.serializers.BridgeConfigMapDeserializer;
 import dev.slimevr.config.serializers.TrackerConfigMapDeserializer;
-import dev.slimevr.vr.trackers.Tracker;
-import dev.slimevr.vr.trackers.TrackerRole;
+import dev.slimevr.tracking.trackers.Tracker;
+import dev.slimevr.tracking.trackers.TrackerRole;
 
 import java.util.HashMap;
 import java.util.Map;
 
 
 @JsonVersionedModel(
-	currentVersion = "2", defaultDeserializeToVersion = "1", toCurrentConverterClass = CurrentVRConfigConverter.class
+	currentVersion = "7", defaultDeserializeToVersion = "7", toCurrentConverterClass = CurrentVRConfigConverter.class
 )
 public class VRConfig {
 
-	private final WindowConfig window = new WindowConfig();
+	private final ServerConfig server = new ServerConfig();
 
 	private final FiltersConfig filters = new FiltersConfig();
 
+	private final DriftCompensationConfig driftCompensation = new DriftCompensationConfig();
+
 	private final OSCConfig oscRouter = new OSCConfig();
 
-	private final OSCConfig vrcOSC = new OSCConfig();
+	private final VRCOSCConfig vrcOSC = new VRCOSCConfig();
+
+	private final VMCConfig vmc = new VMCConfig();
 
 	private final AutoBoneConfig autobone = new AutoBoneConfig();
 
@@ -54,7 +58,6 @@ public class VRConfig {
 		// Initialize default settings for VRC OSC
 		vrcOSC.setPortIn(9001);
 		vrcOSC.setPortOut(9000);
-		// Initialize default tracker role settings
 		vrcOSC
 			.setOSCTrackerRole(
 				TrackerRole.WAIST,
@@ -70,23 +73,35 @@ public class VRConfig {
 				TrackerRole.RIGHT_FOOT,
 				vrcOSC.getOSCTrackerRole(TrackerRole.WAIST, true)
 			);
+
+		// Initialize default settings for VMC
+		vmc.setPortIn(39540);
+		vmc.setPortOut(39539);
 	}
 
 
-	public WindowConfig getWindow() {
-		return window;
+	public ServerConfig getServer() {
+		return server;
 	}
 
 	public FiltersConfig getFilters() {
 		return filters;
 	}
 
+	public DriftCompensationConfig getDriftCompensation() {
+		return driftCompensation;
+	}
+
 	public OSCConfig getOscRouter() {
 		return oscRouter;
 	}
 
-	public OSCConfig getVrcOSC() {
+	public VRCOSCConfig getVrcOSC() {
 		return vrcOSC;
+	}
+
+	public VMCConfig getVMC() {
+		return vmc;
 	}
 
 	public AutoBoneConfig getAutoBone() {
@@ -140,7 +155,7 @@ public class VRConfig {
 		tracker.writeConfig(tc);
 	}
 
-	public BridgeConfig getBrige(String bridgeKey) {
+	public BridgeConfig getBridge(String bridgeKey) {
 		BridgeConfig config = bridges.get(bridgeKey);
 		if (config == null) {
 			config = new BridgeConfig();

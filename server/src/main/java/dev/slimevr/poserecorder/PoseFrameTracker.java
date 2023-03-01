@@ -3,10 +3,10 @@ package dev.slimevr.poserecorder;
 import com.jme3.math.Quaternion;
 import com.jme3.math.Vector3f;
 import dev.slimevr.config.TrackerConfig;
-import dev.slimevr.vr.Device;
-import dev.slimevr.vr.trackers.Tracker;
-import dev.slimevr.vr.trackers.TrackerPosition;
-import dev.slimevr.vr.trackers.TrackerStatus;
+import dev.slimevr.tracking.Device;
+import dev.slimevr.tracking.trackers.Tracker;
+import dev.slimevr.tracking.trackers.TrackerPosition;
+import dev.slimevr.tracking.trackers.TrackerStatus;
 import io.eiren.util.collections.FastList;
 
 import java.util.Iterator;
@@ -43,6 +43,10 @@ public class PoseFrameTracker implements Tracker, Iterable<TrackerFrame> {
 
 	public PoseFrameTracker(Tracker parent) {
 		this(parent.getName());
+	}
+
+	public PoseFrameTracker(PoseFrameTracker parent) {
+		this(parent.name, parent.frames);
 	}
 
 	private int limitCursor() {
@@ -141,9 +145,19 @@ public class PoseFrameTracker implements Tracker, Iterable<TrackerFrame> {
 	@Override
 	public boolean getRotation(Quaternion store) {
 		TrackerFrame frame = safeGetFrame();
-		if (frame != null && frame.hasData(TrackerFrameData.ROTATION)) {
-			store.set(frame.rotation);
-			return true;
+		if (frame != null) {
+			return frame.getRotation(store);
+		}
+
+		store.set(Quaternion.IDENTITY);
+		return false;
+	}
+
+	@Override
+	public boolean getRawRotation(Quaternion store) {
+		TrackerFrame frame = safeGetFrame();
+		if (frame != null) {
+			return frame.getRawRotation(store);
 		}
 
 		store.set(Quaternion.IDENTITY);
@@ -153,9 +167,8 @@ public class PoseFrameTracker implements Tracker, Iterable<TrackerFrame> {
 	@Override
 	public boolean getPosition(Vector3f store) {
 		TrackerFrame frame = safeGetFrame();
-		if (frame != null && frame.hasData(TrackerFrameData.POSITION)) {
-			store.set(frame.position);
-			return true;
+		if (frame != null) {
+			return frame.getPosition(store);
 		}
 
 		store.set(Vector3f.ZERO);
@@ -164,7 +177,12 @@ public class PoseFrameTracker implements Tracker, Iterable<TrackerFrame> {
 
 	@Override
 	public boolean getAcceleration(Vector3f store) {
-		store.set(0, 0, 0);
+		TrackerFrame frame = safeGetFrame();
+		if (frame != null) {
+			return frame.getAcceleration(store);
+		}
+
+		store.set(Vector3f.ZERO);
 		return false;
 	}
 
@@ -248,6 +266,11 @@ public class PoseFrameTracker implements Tracker, Iterable<TrackerFrame> {
 	}
 
 	@Override
+	public boolean hasAcceleration() {
+		return false;
+	}
+
+	@Override
 	public boolean isComputed() {
 		return true;
 	}
@@ -286,5 +309,9 @@ public class PoseFrameTracker implements Tracker, Iterable<TrackerFrame> {
 	@Override
 	public String getCustomName() {
 		return null;
+	}
+
+	@Override
+	public void setCustomName(String customName) {
 	}
 }

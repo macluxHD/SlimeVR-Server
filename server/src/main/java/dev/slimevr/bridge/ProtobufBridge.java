@@ -5,19 +5,23 @@ import com.jme3.math.Vector3f;
 import dev.slimevr.Main;
 import dev.slimevr.bridge.ProtobufMessages.TrackerStatus;
 import dev.slimevr.bridge.ProtobufMessages.*;
+import dev.slimevr.tracking.trackers.*;
 import dev.slimevr.util.ann.VRServerThread;
-import dev.slimevr.vr.trackers.*;
 import io.eiren.util.ann.Synchronize;
 import io.eiren.util.ann.ThreadSafe;
 import io.eiren.util.collections.FastList;
 import io.eiren.util.logging.LogManager;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Queue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 
 public abstract class ProtobufBridge<T extends VRTracker> implements Bridge {
+	private static final String resetSourceNamePrefix = "ProtobufBridge";
 
 	@VRServerThread
 	protected final List<ShareableTracker> sharedTrackers = new FastList<>();
@@ -73,6 +77,11 @@ public abstract class ProtobufBridge<T extends VRTracker> implements Bridge {
 			hadNewData = true;
 		}
 		if (hadNewData && hmdTracker != null) {
+			// If HMD was DISCONNECTED, need to rebuild the skeleton, as it
+			// ignores the HMD if it's DISCONNECTED in order to support using
+			// other trackers on head.
+			if (hmd.getStatus() == dev.slimevr.tracking.trackers.TrackerStatus.DISCONNECTED)
+				Main.getVrServer().updateSkeletonModel();
 			trackerOverrideUpdate(hmdTracker, hmd);
 		}
 	}
@@ -167,22 +176,23 @@ public abstract class ProtobufBridge<T extends VRTracker> implements Bridge {
 		if (trackerAdded.getTrackerRole() == TrackerRole.HMD.id) {
 			hmdTracker = tracker;
 		} else {
-			Main.vrServer.registerTracker(tracker);
+			Main.getVrServer().registerTracker(tracker);
 		}
 	}
 
 	@VRServerThread
 	protected void userActionReceived(UserAction userAction) {
+		String resetSourceName = "%s: %s".formatted(resetSourceNamePrefix, bridgeName);
 		switch (userAction.getName()) {
 			case "calibrate":
 				LogManager
 					.warning("[" + bridgeName + "] Received deprecated user action 'calibrate'!");
 			case "reset":
 				// TODO : Check pose field
-				Main.vrServer.resetTrackers();
+				Main.getVrServer().resetTrackers(resetSourceName);
 				break;
 			case "fast_reset":
-				Main.vrServer.resetTrackersYaw();
+				Main.getVrServer().resetTrackersYaw(resetSourceName);
 				break;
 		}
 	}
@@ -193,7 +203,8 @@ public abstract class ProtobufBridge<T extends VRTracker> implements Bridge {
 		if (tracker != null) {
 			tracker
 				.setStatus(
-					dev.slimevr.vr.trackers.TrackerStatus.getById(trackerStatus.getStatusValue())
+					dev.slimevr.tracking.trackers.TrackerStatus
+						.getById(trackerStatus.getStatusValue())
 				);
 		}
 	}
@@ -224,11 +235,11 @@ public abstract class ProtobufBridge<T extends VRTracker> implements Bridge {
 			for (Entry<Integer, T> integerTEntry : remoteTrackersByTrackerId.entrySet()) {
 				integerTEntry
 					.getValue()
-					.setStatus(dev.slimevr.vr.trackers.TrackerStatus.DISCONNECTED);
+					.setStatus(dev.slimevr.tracking.trackers.TrackerStatus.DISCONNECTED);
 			}
 		}
 		if (hmdTracker != null) {
-			hmd.setStatus(dev.slimevr.vr.trackers.TrackerStatus.DISCONNECTED);
+			hmd.setStatus(dev.slimevr.tracking.trackers.TrackerStatus.DISCONNECTED);
 		}
 	}
 

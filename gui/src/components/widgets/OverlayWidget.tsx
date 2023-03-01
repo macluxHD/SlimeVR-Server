@@ -1,17 +1,19 @@
-import { useEffect } from 'react';
+import { useLocalization } from '@fluent/react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { KeyValuesT, MessageT, Payload, Topic } from 'solarxr-protocol';
 import {
   OVERLAY_DISPLAY_SETTINGS_TOPIC,
   PayloadData,
-  usePubSub
+  usePubSub,
 } from '../../hooks/pubSub';
 import { CheckBox } from '../commons/Checkbox';
+import { Typography } from '../commons/Typography';
 
 export function OverlayWidget() {
-  const { t } = useTranslation();
+  const { l10n } = useLocalization();
   const { publish, subscribe, keyValues } = usePubSub();
+  const [loading, setLoading] = useState(true);
   const { reset, control, handleSubmit, watch } = useForm<{
     isVisible: boolean;
     isMirrored: boolean;
@@ -25,6 +27,7 @@ export function OverlayWidget() {
   subscribe(
     OVERLAY_DISPLAY_SETTINGS_TOPIC,
     (payload: PayloadData, type: Payload) => {
+      setLoading(false);
       if (type !== Payload.KeyValues) throw new Error('Invalid payload');
       const obj = keyValues(payload);
       reset({
@@ -62,20 +65,27 @@ export function OverlayWidget() {
     publish(message);
   };
 
-  return (
+  return !loading ? (
     <form className="bg-background-60 flex flex-col w-full rounded-md px-2">
+      <div className="mt-2 px-1">
+        <Typography color="secondary">
+          {l10n.getString('widget-overlay')}
+        </Typography>
+      </div>
       <CheckBox
         control={control}
         name="isVisible"
         variant="toggle"
-        label={t('overlay.is-visible-label')}
+        label={l10n.getString('widget-overlay-is_visible_label')}
       ></CheckBox>
       <CheckBox
         control={control}
         name="isMirrored"
         variant="toggle"
-        label={t('overlay.is-mirrored-label')}
+        label={l10n.getString('widget-overlay-is_mirrored_label')}
       ></CheckBox>
     </form>
+  ) : (
+    <></>
   );
 }

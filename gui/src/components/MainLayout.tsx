@@ -1,12 +1,21 @@
 import classNames from 'classnames';
-import { ReactNode } from 'react';
-import { ResetType } from 'solarxr-protocol';
+import { ReactNode, useEffect, useState } from 'react';
+import {
+  ResetType,
+  RpcMessage,
+  SettingsRequestT,
+  SettingsResponseT,
+} from 'solarxr-protocol';
+import { useConfig } from '../hooks/config';
 import { useLayout } from '../hooks/layout';
 import { BVHButton } from './BVHButton';
 import { ResetButton } from './home/ResetButton';
 import { Navbar } from './Navbar';
 import { TopBar } from './TopBar';
+import { DeveloperModeWidget } from './widgets/DeveloperModeWidget';
 import { OverlayWidget } from './widgets/OverlayWidget';
+import { ClearDriftCompensationButton } from './ClearDriftCompensationButton';
+import { useWebsocketAPI } from '../hooks/websocket-api';
 
 export function MainLayoutRoute({
   children,
@@ -19,6 +28,19 @@ export function MainLayoutRoute({
 }) {
   const { layoutHeight, ref } = useLayout<HTMLDivElement>();
   const { layoutWidth, ref: refw } = useLayout<HTMLDivElement>();
+  const { config } = useConfig();
+  const { useRPCPacket, sendRPCPacket } = useWebsocketAPI();
+  const [driftCompensationEnabled, setDriftCompensationEnabled] =
+    useState(false);
+
+  useEffect(() => {
+    sendRPCPacket(RpcMessage.SettingsRequest, new SettingsRequestT());
+  }, []);
+
+  useRPCPacket(RpcMessage.SettingsResponse, (settings: SettingsResponseT) => {
+    if (settings.driftCompensation != null)
+      setDriftCompensationEnabled(settings.driftCompensation.enabled);
+  });
 
   return (
     <>
@@ -41,7 +63,7 @@ export function MainLayoutRoute({
             </div>
             {widgets && (
               <div className="flex flex-col px-2 min-w-[274px] w-[274px] gap-2 pt-2 rounded-xl overflow-y-auto bg-background-70">
-                <div className="grid grid-cols-2 gap-2 w-full">
+                <div className="grid grid-cols-2 gap-2 w-full [&>*:nth-child(odd):last-of-type]:col-span-full">
                   <ResetButton
                     type={ResetType.Quick}
                     variant="big"
@@ -50,15 +72,25 @@ export function MainLayoutRoute({
                     type={ResetType.Full}
                     variant="big"
                   ></ResetButton>
-                  <ResetButton
-                    type={ResetType.Mounting}
-                    variant="big"
-                  ></ResetButton>
+                  {config?.debug && (
+                    <ResetButton
+                      type={ResetType.Mounting}
+                      variant="big"
+                    ></ResetButton>
+                  )}
                   <BVHButton></BVHButton>
+                  {driftCompensationEnabled && (
+                    <ClearDriftCompensationButton></ClearDriftCompensationButton>
+                  )}
                 </div>
                 <div className="w-full">
                   <OverlayWidget></OverlayWidget>
                 </div>
+                {config?.debug && (
+                  <div className="w-full">
+                    <DeveloperModeWidget></DeveloperModeWidget>
+                  </div>
+                )}
               </div>
             )}
           </div>
